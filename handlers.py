@@ -76,7 +76,7 @@ async def send_graph(message: types.Message):
     
     # апдейт бази якщо пусто
     if not schedule_data:
-        await message.answer("🔄 Шукаю свіжі дані...")
+        await message.answer("Шукаю свіжі дані...")
         await services.update_schedule_database()
         schedule_data = await database.get_schedule_for_group(today, group)
     

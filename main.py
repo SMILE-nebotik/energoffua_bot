@@ -23,7 +23,7 @@ async def check_and_send_mailing(bot: Bot):
             
             # оновлення якщо пусто
             if not schedule:
-                print(f"Для {user_id} немає даних в базі. Оновлюю...")
+                print(f"Для {user_id} немає даних в базі")
                 await services.update_schedule_database()
                 schedule = await database.get_schedule_for_group(today, group)
             
