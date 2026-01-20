@@ -2,6 +2,7 @@
 .venv/
 venv/
 env/
+.env
 
 chrome_profile/
 
@@ -21,5 +22,4 @@ schedule_screenshot.png
 *.html
 debug_page.html
 
-config.py
 bot_users.db

@@ -3,12 +3,14 @@ import logging
 from datetime import datetime, timedelta
 import pytz
 
+from middlewares import AntiFloodMiddleware
 from aiogram import Bot, Dispatcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from config import API_TOKEN, ADMIN_IDS
 import database
 import handlers
 import services 
+
 
 logging.basicConfig(level=logging.INFO)
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
@@ -18,7 +20,7 @@ def is_night_time():
     hour = datetime.now(KYIV_TZ).hour
     return hour >= 23 or hour < 7
 
-# Функція: Щоденний звіт
+# Щоденний звіт
 async def check_daily_alert(bot: Bot):
     now_kyiv = datetime.now(KYIV_TZ).strftime("%H:%M")
     today_str = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
@@ -119,6 +121,7 @@ async def main():
     await database.create_table()
     bot = Bot(token=API_TOKEN)
     dp = Dispatcher()
+    dp.message.middleware(AntiFloodMiddleware(time_limit=1)) # 1 секунда затримки
     dp.include_router(handlers.router)
 
     scheduler = AsyncIOScheduler(timezone=KYIV_TZ)
@@ -126,6 +129,7 @@ async def main():
     scheduler.add_job(scheduled_update_and_notify, 'cron', minute='0,30', args=[bot])
     scheduler.add_job(check_upcoming_outages, 'cron', minute='*', args=[bot])
     scheduler.add_job(check_daily_alert, 'cron', minute='*', args=[bot])
+    scheduler.add_job(services.backup_database, 'cron', hour=3, minute=0) # щоденний бекап о 3:00
     
     scheduler.start()
     

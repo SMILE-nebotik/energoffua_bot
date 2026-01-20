@@ -9,6 +9,7 @@ import services
 import config
 from datetime import datetime, timedelta
 import pytz 
+import re
 
 router = Router()
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
@@ -108,8 +109,56 @@ async def process_group(message: types.Message, state: FSMContext):
 
 @router.message(UserSettings.waiting_for_time)
 async def process_time(message: types.Message, state: FSMContext):
-    await database.update_alert_time(message.from_user.id, message.text)
-    await message.answer(f"✅ Готово! Налаштування завершено.", reply_markup=get_main_menu_keyboard())
+    raw_input = message.text.strip()
+    
+    # валідацію плюс нормалізація через бібліотеку re
+    normalized_input = re.sub(r"[.,\s-]+", ":", raw_input)
+    
+    # логіка розпізнавання
+    hours, minutes = 0, 0
+    
+    try:
+        if ":" in normalized_input:
+            parts = normalized_input.split(":")
+            if len(parts) == 2:
+                hours = int(parts[0])
+                minutes = int(parts[1])
+            else:
+                raise ValueError
+        else:
+            if normalized_input.isdigit() and len(normalized_input) <= 2:
+                 hours = int(normalized_input)
+                 minutes = 0
+            elif normalized_input.isdigit() and len(normalized_input) in [3, 4]:
+                hours = int(normalized_input[:-2])
+                minutes = int(normalized_input[-2:])
+            else:
+                raise ValueError
+        # перевірка валідності часу
+        if not (0 <= hours <= 23 and 0 <= minutes <= 59):
+            await message.answer("❌ Час має бути реальним (00-23 години, 00-59 хвилини). Спробуйте ще раз.")
+            return
+
+    except ValueError:
+        await message.answer(
+            "❌ Не зміг розпізнати час.\n"
+            "Спробуйте простіші варіанти:\n"
+            "• `08:00` або `8:00`\n"
+            "• `8.30`\n"
+            "• Просто `8` (для 08:00)"
+        )
+        return
+
+    # перероб для бази
+    formatted_time = f"{hours:02d}:{minutes:02d}"
+    
+    await database.update_alert_time(message.from_user.id, formatted_time)
+    
+    await message.answer(
+        f"✅ Прийнято! Ваш час звіту: **{formatted_time}**\n"
+        f"Налаштування завершено.",
+        reply_markup=get_main_menu_keyboard()
+    )
     await state.clear()
 
 @router.callback_query(F.data == "show_my_graph")

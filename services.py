@@ -17,6 +17,27 @@ import image_parser
 import database
 from aiogram.types import FSInputFile
 
+import shutil
+import os
+from datetime import datetime
+from config import DB_NAME
+
+async def backup_database():
+    backup_dir = "backups"
+    if not os.path.exists(backup_dir):
+        os.makedirs(backup_dir)
+    
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    backup_filename = f"{DB_NAME.replace('.db', '')}_{date_str}.db"
+    backup_path = os.path.join(backup_dir, backup_filename)
+    
+    try:
+        await asyncio.to_thread(shutil.copy2, DB_NAME, backup_path)
+        print(f"успішщний бекап: {backup_path}")
+        # потім якшо не забуду добавити авто очистку старих бекапів
+    except Exception as e:
+        print(f"помилка бекапу {e}")
+
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
 PAGE_URL = "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/"
 
@@ -45,7 +66,7 @@ def download_original_image():
         # пошук iframe з картинкою
         target_url = None
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        print(f"🔎 Знайдено iframe: {len(iframes)}")
+        print(f"пошук айфреймів: {len(iframes)}")
         
         for i, frame in enumerate(iframes):
             try:

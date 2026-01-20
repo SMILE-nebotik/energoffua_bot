@@ -38,7 +38,7 @@ def get_info_from_image(image_bytes):
         return found_date, found_time
         
     except Exception as e:
-        print(f"помилка 41{e}")
+        print(f"помилка OCR: {e}")
         return None, None
 
 def parse_image(image_bytes, debug=False):
