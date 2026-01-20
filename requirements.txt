@@ -1,6 +1,11 @@
 # файл шоб швидко скачати і розвернути на сервері но хуй я його напишу і буду як додік в терміналі це все вводити
 aiogram
-httpx
+apscheduler
+selenium
+webdriver-manager
+requests
+opencv-python-headless
+numpy
+pillow
 aiosqlite
-apscheduler==3.10.4
-Pillow
+pytz

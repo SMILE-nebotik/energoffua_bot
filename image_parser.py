@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 import pytesseract
 import io
-
+import re
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -15,24 +15,31 @@ TOP_TABLE_START_Y = 447
 BOT_TABLE_START_X = 205
 BOT_TABLE_START_Y = 1337
 
-# шаг по x i y 
+# Кроки сітки
 STEP_X = 65 
 STEP_Y = 61
 
-# дата над таблицею (доробити)
-DATE_AREA = (50, 50, 1500, 400) 
+DATE_AREA = (0, 0, 1000, 400) 
 
 def get_date_from_image(image_bytes):
     try:
         img = Image.open(io.BytesIO(image_bytes))
-
-
+        
         date_crop = img.crop(DATE_AREA)
+        
+        text = pytesseract.image_to_string(date_crop, lang='ukr+eng', config='--psm 6')
 
-        text = pytesseract.image_to_string(date_crop, lang='ukr+eng')
-        return text
+        text = text.replace("\n", " ")
+        print(f"🔍 OCR прочитав текст: '{text}'")
+        
+        # Шукаємо дату регуляркою
+        match = re.search(r"(\d{2}\.\d{2}\.\d{4})", text)
+        if match:
+            return match.group(1) # Поверне "20.01.2026"
+            
+        return None
     except Exception as e:
-        print(f"ПОмиклка орс {e}")
+        print(f"⚠️ Помилка OCR: {e}")
         return None
 
 def parse_image(image_bytes, debug=False):
@@ -43,8 +50,8 @@ def parse_image(image_bytes, debug=False):
 
     schedule = {}
     
-    # кроки перевірки
-    LOCAL_STEP_X = 65
+    # Локальні налаштування (можна підкрутити, якщо з'їжджає)
+    LOCAL_STEP_X = 66.4 # Трішки зменшив крок, щоб в кінці не з'їжджало
     LOCAL_STEP_Y = 61
 
     for row in range(12):
@@ -61,7 +68,7 @@ def parse_image(image_bytes, debug=False):
                 start_x, start_y = BOT_TABLE_START_X, BOT_TABLE_START_Y
                 current_col = col - 24
             
-            # кроки з корекці\ю
+            # Розрахунок координат
             x = int(start_x + (current_col * LOCAL_STEP_X))
             y = int(start_y + (row * LOCAL_STEP_Y))
             
@@ -72,21 +79,21 @@ def parse_image(image_bytes, debug=False):
             pixel = img[y, x]
             b, g, r = pixel
             
-            # блок під перевірку кольору
+            # Визначаємо яскравість
             brightness = (int(r) + int(g) + int(b)) / 3
             
-            # визначення статусу
+            # Логіка кольору
             if brightness > 160:
                 status = 'on'
-                color = (0, 255, 0)
+                color = (0, 255, 0) # Зелений
             else:
                 status = 'off'
-                color = (0, 0, 255)
+                color = (0, 0, 255) # Червоний
 
             row_data.append(status)
             
             if debug:
-                cv2.circle(img, (x, y), 8, color, -1)
+                cv2.circle(img, (x, y), 6, color, -1)
                 
         schedule[group_name] = row_data
         

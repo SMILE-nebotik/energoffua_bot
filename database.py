@@ -1,6 +1,7 @@
 #файл фулл з базами робота
 import aiosqlite
 import json
+import logging
 from config import DB_NAME
 
 async def create_table():
@@ -14,7 +15,7 @@ async def create_table():
                 alert_time TEXT DEFAULT '19:00'
             )
         ''')
-        # Таблиця для розкладу
+        # Таблиця для розкладу (тепер ключ - дата + група)
         await db.execute('''
             CREATE TABLE IF NOT EXISTS schedule_cache (
                 date TEXT, 
