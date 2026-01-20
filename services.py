@@ -126,7 +126,7 @@ async def update_schedule_database():
         if match:
             day, month = match.groups()
             target_date = f"2026-{month}-{day}"
-            print(f"📅 Дата розпізнана: {target_date}")
+            print(f"Дата розпізнана: {target_date}")
 
     print(f"аналіз")
     parsed_data = image_parser.parse_image(image_bytes, debug=True)
