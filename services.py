@@ -48,15 +48,15 @@ def download_original_image():
                 if href and (".jpg" in href.lower() or ".png" in href.lower() or "google.com/file" in href) and "logo" not in href:
                     if "GPV" in href or "grafik" in href.lower() or "drive" in href:
                         target_url = href
-                        print(f"   🎉 ДЖЕКПОТ (Лінк): {href}")
+                        print(f"\ лінк {href}")
                         break
             except: continue
             
         # чек айфреймів якщо нема
         if not target_url:
-            print("\n🔎 ЕТАП 2: Сканую IFRAME (вкладені сайти)...")
+            print("\nскан афйремів")
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
-            print(f"📦 Знайдено iframe: {len(iframes)}")
+            print(f"Знайдено iframe: {len(iframes)}")
             
             for i, frame in enumerate(iframes):
                 try:
@@ -64,18 +64,17 @@ def download_original_image():
                     iframes = driver.find_elements(By.TAG_NAME, "iframe")
                     driver.switch_to.frame(iframes[i])
                     
-                    print(f"   ➡️ Зайшов у iframe #{i+1}...")
+                    print(f" успіх{i+1}...")
                     
                     imgs = driver.find_elements(By.TAG_NAME, "img")
                     for img in imgs:
                         src = img.get_attribute("src")
-                        # Перевірка ширини може дати збій в iframe, тому віримо назві або розширенню
                         if src and ("GPV" in src or "grafik" in src.lower() or src.endswith(".png")):
                             print(f"є {src}")
                             target_url = src
                             break
                 except Exception as e:
-                    print(f"      ⚠️ Не пустило в iframe: {e}")
+                    print(f"Не успіх {e}")
                 
                 if target_url: break
 
