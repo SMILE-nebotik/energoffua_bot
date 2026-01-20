@@ -7,22 +7,22 @@ import re
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-# --- КООРДИНАТИ ---
+# кординати
 TOP_TABLE_START_X = 205
 TOP_TABLE_START_Y = 447
 
 BOT_TABLE_START_X = 205
 BOT_TABLE_START_Y = 1337
 
-# Оновлені кроки (те, що ми підібрали)
+# кроки по ч X і Y
 LOCAL_STEP_X = 66.0 
 LOCAL_STEP_Y = 60.5
 
-# Область дати
+# Область 
 DATE_AREA = (0, 0, 1000, 400) 
 
 def get_info_from_image(image_bytes):
-    """Витягує дату та час оновлення з картинки через OCR"""
+    """получає дату і час з картинки за допомогою OCR"""
     try:
         img = Image.open(io.BytesIO(image_bytes))
         date_crop = img.crop(DATE_AREA)
@@ -38,7 +38,7 @@ def get_info_from_image(image_bytes):
         if date_match:
             found_date = date_match.group(1)
 
-        # Шукаємо час (HH:MM)
+        # пошук часу за (hh:mm)
         time_match = re.search(r"(\d{2}:\d{2})", text)
         if time_match:
             found_time = time_match.group(1)
@@ -46,16 +46,16 @@ def get_info_from_image(image_bytes):
         return found_date, found_time
         
     except Exception as e:
-        print(f"⚠️ Помилка OCR: {e}")
+        print(f"помилка орс: {e}")
         return None, None
 
 def parse_image(image_bytes, debug=False):
-    """Парсить пікселі на графіку і повертає словник {група: [статуси]}"""
+    # парсиг розкладу з картинки
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
     if img is None: 
-        print("❌ Помилка: не вдалося прочитати зображення")
+        print("помилка зчитки зображення")
         return None
 
     schedule = {}
@@ -67,7 +67,7 @@ def parse_image(image_bytes, debug=False):
         row_data = []
         
         for col in range(48):
-            # Визначаємо координати (верхня чи нижня таблиця)
+            # дві таблиці
             if col < 24:
                 start_x, start_y = TOP_TABLE_START_X, TOP_TABLE_START_Y
                 current_col = col
@@ -75,7 +75,7 @@ def parse_image(image_bytes, debug=False):
                 start_x, start_y = BOT_TABLE_START_X, BOT_TABLE_START_Y
                 current_col = col - 24
             
-            # Розрахунок точки
+            # Обчислюємо координати пікселя
             x = int(start_x + (current_col * LOCAL_STEP_X))
             y = int(start_y + (row * LOCAL_STEP_Y))
             
@@ -84,12 +84,12 @@ def parse_image(image_bytes, debug=False):
                 row_data.append('unknown')
                 continue
 
-            # Отримуємо колір пікселя
+            # колір пікселів
             pixel = img[y, x]
             b, g, r = pixel
             brightness = (int(r) + int(g) + int(b)) / 3
             
-            # Логіка: світло > 160 (білий), темно <= 160 (кольоровий/сірий)
+            # визначення статусу
             if brightness > 160: 
                 status = 'on'
             else:

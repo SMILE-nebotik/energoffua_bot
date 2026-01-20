@@ -3,7 +3,7 @@ from aiogram.types import Message
 from cachetools import TTLCache
 
 class AntiFloodMiddleware(BaseMiddleware):
-    def __init__(self, time_limit: int = 0.5):
+    def __init__(self, time_limit: int = 1):
 
         self.limit = TTLCache(maxsize=10_000, ttl=time_limit)
 

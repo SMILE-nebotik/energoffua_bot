@@ -3,7 +3,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
-from aiogram.exceptions import TelegramBadRequest # <--- ДОДАЛИ ІМПОРТ ДЛЯ ОБРОБКИ ПОМИЛКИ
+from aiogram.exceptions import TelegramBadRequest
 import database
 import services
 import config
