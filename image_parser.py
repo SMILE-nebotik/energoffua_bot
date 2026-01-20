@@ -7,40 +7,43 @@ import re
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-# Верхня таблиця
 TOP_TABLE_START_X = 205
 TOP_TABLE_START_Y = 447
-
-# Нижня таблиця
 BOT_TABLE_START_X = 205
 BOT_TABLE_START_Y = 1337
-
-# Кроки сітки
 STEP_X = 65 
 STEP_Y = 61
-
 DATE_AREA = (0, 0, 1000, 400) 
 
-def get_date_from_image(image_bytes):
+def get_info_from_image(image_bytes):
+    """Повертає кортеж (дата_графіка, час_оновлення_сайту)"""
     try:
         img = Image.open(io.BytesIO(image_bytes))
-        
         date_crop = img.crop(DATE_AREA)
-        
         text = pytesseract.image_to_string(date_crop, lang='ukr+eng', config='--psm 6')
-
         text = text.replace("\n", " ")
-        print(f"🔍 OCR прочитав текст: '{text}'")
+        print(f"🔍 OCR raw: '{text}'")
         
-        # Шукаємо дату регуляркою
-        match = re.search(r"(\d{2}\.\d{2}\.\d{4})", text)
-        if match:
-            return match.group(1) # Поверне "20.01.2026"
+        found_date = None
+        found_time = None
+
+        # 1. Шукаємо дату графіка (наприклад 20.01.2026)
+        # Шукаємо ту дату, що йде після "ГПВ на" або просто дату
+        date_match = re.search(r"(\d{2}\.\d{2}\.\d{4})", text)
+        if date_match:
+            found_date = date_match.group(1)
+
+        # 2. Шукаємо час оновлення (формат 19:07)
+        # Зазвичай там пише "станом на 19:07" або просто час перед датою
+        time_match = re.search(r"(\d{2}:\d{2})", text)
+        if time_match:
+            found_time = time_match.group(1)
             
-        return None
+        return found_date, found_time
+        
     except Exception as e:
         print(f"⚠️ Помилка OCR: {e}")
-        return None
+        return None, None
 
 def parse_image(image_bytes, debug=False):
     nparr = np.frombuffer(image_bytes, np.uint8)
@@ -49,9 +52,7 @@ def parse_image(image_bytes, debug=False):
     if img is None: return None
 
     schedule = {}
-    
-    # Локальні налаштування (можна підкрутити, якщо з'їжджає)
-    LOCAL_STEP_X = 66.4 # Трішки зменшив крок, щоб в кінці не з'їжджало
+    LOCAL_STEP_X = 66.4
     LOCAL_STEP_Y = 61
 
     for row in range(12):
@@ -68,7 +69,6 @@ def parse_image(image_bytes, debug=False):
                 start_x, start_y = BOT_TABLE_START_X, BOT_TABLE_START_Y
                 current_col = col - 24
             
-            # Розрахунок координат
             x = int(start_x + (current_col * LOCAL_STEP_X))
             y = int(start_y + (row * LOCAL_STEP_Y))
             
@@ -78,26 +78,14 @@ def parse_image(image_bytes, debug=False):
 
             pixel = img[y, x]
             b, g, r = pixel
-            
-            # Визначаємо яскравість
             brightness = (int(r) + int(g) + int(b)) / 3
             
-            # Логіка кольору
             if brightness > 160:
                 status = 'on'
-                color = (0, 255, 0) # Зелений
             else:
                 status = 'off'
-                color = (0, 0, 255) # Червоний
 
             row_data.append(status)
-            
-            if debug:
-                cv2.circle(img, (x, y), 6, color, -1)
-                
         schedule[group_name] = row_data
-        
-    if debug:
-        cv2.imwrite("debug_grid.png", img)
         
     return schedule
