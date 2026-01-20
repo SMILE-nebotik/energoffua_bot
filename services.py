@@ -17,15 +17,14 @@ import image_parser
 import database
 from aiogram.types import FSInputFile
 
-# Встановлюємо Київський час
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
 PAGE_URL = "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/"
 
 def download_original_image():
-    print("🚀 Старт перевірки сайту...")
+    print("24 початок скачування картинки...")
     
     options = Options()
-    # options.add_argument("--headless=new") # Можна увімкнути, якщо Tesseract працює
+    # options.add_argument("--headless=new") # не трогати поки я не знайду інший костиль поеи воно тримається на цьому костилі
     profile_path = os.path.join(os.getcwd(), "chrome_profile")
     options.add_argument(f"--user-data-dir={profile_path}")
     options.add_argument("--disable-blink-features=AutomationControlled")
@@ -40,12 +39,10 @@ def download_original_image():
     try:
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
-        
-        print(f"🔗 Перехід на: {PAGE_URL}")
         driver.get(PAGE_URL)
         time.sleep(5) 
         
-        # --- ЕТАП 1: Шукаємо картинку в IFRAME ---
+        # пошук iframe з картинкою
         target_url = None
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
         print(f"🔎 Знайдено iframe: {len(iframes)}")
@@ -61,15 +58,15 @@ def download_original_image():
                 for img in imgs:
                     src = img.get_attribute("src")
                     if src and ("GPV" in src or "grafik" in src.lower() or src.endswith(".png")):
-                        print(f"📸 Знайдено картинку: {src}")
+                        print(f"є картинка: {src}")
                         target_url = src
                         break
             except Exception as e:
-                print(f"⚠️ Помилка читання iframe {i}: {e}")
+                print(f"нема картинки{i}: {e}")
             
             if target_url: break
 
-        # --- ЕТАП 2: Завантаження ---
+        # скачка
         if target_url:
             session = requests.Session()
             headers = {"User-Agent": driver.execute_script("return navigator.userAgent;")}
@@ -80,14 +77,14 @@ def download_original_image():
             resp = session.get(target_url)
             if resp.status_code == 200:
                 file_content = resp.content
-                print("📥 Картинку завантажено успішно")
+                print("успіх скачування картинки")
             else:
-                print(f"❌ Помилка скачування: {resp.status_code}")
+                print(f"помилка 82 {resp.status_code}")
         else:
-            print("❌ Не знайдено посилання на графік")
+            print("помилка 84: картинка не знайдена")
 
     except Exception as e:
-        print(f"❌ Критична помилка Selenium: {e}")
+        print(f"помилка 87 селеніума{e}")
     finally:
         if driver:
             driver.quit()
@@ -95,10 +92,6 @@ def download_original_image():
     return file_content
 
 async def update_schedule_database():
-    """
-    Повертає список груп (['1.1', '2.1']), де графік змінився.
-    Повертає None, якщо помилка.
-    """
     image_bytes = await asyncio.to_thread(download_original_image)
     if not image_bytes: return None
     
@@ -117,39 +110,35 @@ async def update_schedule_database():
     if not target_date:
         target_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
 
-    # Якщо час не знайдено, ставимо поточний
+    # установка часу оновлення якшо не зловився з картинки
     if not ocr_time_str:
          ocr_time_str = datetime.now(KYIV_TZ).strftime("%H:%M")
 
-    print(f"📊 Аналіз змін для: {target_date}")
+    print(f"чек змін {target_date}")
     new_parsed_data = await asyncio.to_thread(image_parser.parse_image, image_bytes, debug=True)
     
     changed_groups = []
 
     if new_parsed_data:
-        # --- ЛОГІКА ПОРІВНЯННЯ ---
         for group_id, new_schedule in new_parsed_data.items():
-            # Отримуємо старий графік з бази
             old_data = await database.get_schedule_for_group(target_date, group_id)
             
             save_it = True
             if old_data:
                 old_schedule, _ = old_data
-                # Якщо списки відрізняються - значить графік змінився!
                 if old_schedule != new_schedule:
-                    print(f"⚠️ ЗМІНА ГРАФІКУ для {group_id}!")
+                    print(f"є зміни попередження {group_id}!")
                     changed_groups.append(group_id)
                 else:
-                    save_it = True # Все одно оновлюємо (може змінився час оновлення)
+                    save_it = True
             else:
-                # Якщо даних не було, це не вважається "зміною" (це ініціалізація)
                 pass
 
             if save_it:
                 await database.save_schedule_cache(target_date, {group_id: new_schedule}, site_updated_at=ocr_time_str)
         
-        print(f"💾 База оновлена. Змін виявлено у групах: {changed_groups}")
-        return changed_groups # Повертаємо список змін
+        print(f"апдейт успішний {changed_groups}")
+        return changed_groups
         
     return None
 

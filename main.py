@@ -13,7 +13,7 @@ import services
 logging.basicConfig(level=logging.INFO)
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
 
-# Функція перевірки: чи зараз ніч? (23:00 - 07:00)
+# перевірка години
 def is_night_time():
     hour = datetime.now(KYIV_TZ).hour
     return hour >= 23 or hour < 7
@@ -38,7 +38,7 @@ async def check_daily_alert(bot: Bot):
                 except Exception as e:
                     logging.error(f"Помилка відправки {user_id}: {e}")
 
-# Функція: Оновлення бази та сповіщення про ЗМІНИ
+# апдейт бази і сооб про зміни
 async def scheduled_update_and_notify(bot: Bot):
     try:
         changed_groups = await services.update_schedule_database()
@@ -75,11 +75,11 @@ async def scheduled_update_and_notify(bot: Bot):
         logging.error(f"Global update error: {e}")
         for admin_id in ADMIN_IDS:
             try:
-                await bot.send_message(admin_id, f"🆘 **CRASH REPORT**\nПомилка в scheduled_update: {e}")
+                await bot.send_message(admin_id, f"\n помилка: {e}")
             except: pass
 
 
-# Функція: Попередження за 15 хвилин
+# попередження за 15 хвилин
 async def check_upcoming_outages(bot: Bot):
     now_kyiv = datetime.now(KYIV_TZ)
     future_time = now_kyiv + timedelta(minutes=15)
@@ -129,14 +129,13 @@ async def main():
     
     scheduler.start()
     
-    print("🚀 Бот запущено!")
+    print("start ex")
     
     await bot.delete_webhook(drop_pending_updates=True)
-    # ВИПРАВЛЕНИЙ РЯДОК:
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Бот зупинений")
+        print("bot stopped")

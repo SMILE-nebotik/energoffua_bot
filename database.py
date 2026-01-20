@@ -4,7 +4,6 @@ from config import DB_NAME
 
 async def create_table():
     async with aiosqlite.connect(DB_NAME) as db:
-        # Додали notification_mode
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -25,8 +24,7 @@ async def create_table():
             )
         ''')
         await db.commit()
-
-# Оновлення налаштувань сповіщень
+# Оновлюємо режим сповіщень користувача
 async def update_notification_mode(user_id: int, mode: str):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute('UPDATE users SET notification_mode = ? WHERE user_id = ?', (mode, user_id))
@@ -37,10 +35,6 @@ async def get_all_users_full():
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute('SELECT user_id, group_number, alert_time, notification_mode FROM users') as cursor:
             return await cursor.fetchall()
-
-# --- Решта функцій (add_user, get_user_data, save_schedule...) залишаються ТАКИМИ Ж ЯК БУЛИ ---
-# Просто скопіюй їх з попереднього варіанту, вони не змінилися.
-# Нижче дублюю для повноти картини тільки ті, що треба:
 
 async def add_user(user_id: int, username: str, group_number: str):
     async with aiosqlite.connect(DB_NAME) as db:

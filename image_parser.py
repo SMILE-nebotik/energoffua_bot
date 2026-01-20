@@ -16,25 +16,21 @@ STEP_Y = 61
 DATE_AREA = (0, 0, 1000, 400) 
 
 def get_info_from_image(image_bytes):
-    """Повертає кортеж (дата_графіка, час_оновлення_сайту)"""
+    #пошук дати і часу на зображенні через OCR
     try:
         img = Image.open(io.BytesIO(image_bytes))
         date_crop = img.crop(DATE_AREA)
         text = pytesseract.image_to_string(date_crop, lang='ukr+eng', config='--psm 6')
         text = text.replace("\n", " ")
-        print(f"🔍 OCR raw: '{text}'")
+        print(f"текст визначений '{text}'")
         
         found_date = None
         found_time = None
 
-        # 1. Шукаємо дату графіка (наприклад 20.01.2026)
-        # Шукаємо ту дату, що йде після "ГПВ на" або просто дату
         date_match = re.search(r"(\d{2}\.\d{2}\.\d{4})", text)
         if date_match:
             found_date = date_match.group(1)
 
-        # 2. Шукаємо час оновлення (формат 19:07)
-        # Зазвичай там пише "станом на 19:07" або просто час перед датою
         time_match = re.search(r"(\d{2}:\d{2})", text)
         if time_match:
             found_time = time_match.group(1)
@@ -42,7 +38,7 @@ def get_info_from_image(image_bytes):
         return found_date, found_time
         
     except Exception as e:
-        print(f"⚠️ Помилка OCR: {e}")
+        print(f"помилка 41{e}")
         return None, None
 
 def parse_image(image_bytes, debug=False):
