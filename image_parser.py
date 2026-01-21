@@ -4,8 +4,11 @@ from PIL import Image
 import pytesseract
 import io
 import re
+import sys
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Налаштування шляху до tesseract на Windows
+if sys.platform.startswith('win'):
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 # кординати
 TOP_TABLE_START_X = 205
