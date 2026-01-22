@@ -4,34 +4,30 @@ from PIL import Image
 import pytesseract
 import io
 import re
-import sys
+import logging
+from core.config import config
 
-# Налаштування шляху до tesseract на Windows
-if sys.platform.startswith('win'):
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# На Linux tesseract зазвичай у PATH, але про всяк випадок можна брати з конфігу
+# pytesseract.pytesseract.tesseract_cmd = config.TESSERACT_CMD 
 
-# кординати
+# Константи координат (твої старі налаштування)
 TOP_TABLE_START_X = 205
 TOP_TABLE_START_Y = 447
-
 BOT_TABLE_START_X = 205
 BOT_TABLE_START_Y = 1337
-
-# кроки по ч X і Y
 LOCAL_STEP_X = 66.0 
 LOCAL_STEP_Y = 60.5
-
-# Область 
 DATE_AREA = (0, 0, 1000, 400) 
 
 def get_info_from_image(image_bytes):
-    """получає дату і час з картинки за допомогою OCR"""
+    """Отримує дату і час з картинки за допомогою OCR"""
     try:
         img = Image.open(io.BytesIO(image_bytes))
         date_crop = img.crop(DATE_AREA)
+        # config='--psm 6' добре підходить для блоків тексту
         text = pytesseract.image_to_string(date_crop, lang='ukr+eng', config='--psm 6')
         text = text.replace("\n", " ")
-        print(f"🔍 OCR текст: '{text}'")
+        logging.info(f"🔍 OCR текст: '{text}'")
         
         found_date = None
         found_time = None
@@ -41,7 +37,7 @@ def get_info_from_image(image_bytes):
         if date_match:
             found_date = date_match.group(1)
 
-        # пошук часу за (hh:mm)
+        # Шукаємо час (hh:mm)
         time_match = re.search(r"(\d{2}:\d{2})", text)
         if time_match:
             found_time = time_match.group(1)
@@ -49,16 +45,16 @@ def get_info_from_image(image_bytes):
         return found_date, found_time
         
     except Exception as e:
-        print(f"помилка орс: {e}")
+        logging.error(f"Помилка OCR: {e}")
         return None, None
 
-def parse_image(image_bytes, debug=False):
-    # парсиг розкладу з картинки
+def parse_image(image_bytes):
+    """Парсинг пікселів таблиці"""
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
     if img is None: 
-        print("помилка зчитки зображення")
+        logging.error("Помилка зчитування зображення OpenCV")
         return None
 
     schedule = {}
@@ -70,7 +66,7 @@ def parse_image(image_bytes, debug=False):
         row_data = []
         
         for col in range(48):
-            # дві таблиці
+            # Вибір таблиці (верхня чи нижня)
             if col < 24:
                 start_x, start_y = TOP_TABLE_START_X, TOP_TABLE_START_Y
                 current_col = col
@@ -78,27 +74,20 @@ def parse_image(image_bytes, debug=False):
                 start_x, start_y = BOT_TABLE_START_X, BOT_TABLE_START_Y
                 current_col = col - 24
             
-            # Обчислюємо координати пікселя
             x = int(start_x + (current_col * LOCAL_STEP_X))
             y = int(start_y + (row * LOCAL_STEP_Y))
             
-            # Перевірка меж
             if y >= img.shape[0] or x >= img.shape[1]:
                 row_data.append('unknown')
                 continue
 
-            # колір пікселів
             pixel = img[y, x]
             b, g, r = pixel
             brightness = (int(r) + int(g) + int(b)) / 3
             
-            # визначення статусу
-            if brightness > 160: 
-                status = 'on'
-            else:
-                status = 'off'
-
+            status = 'on' if brightness > 160 else 'off'
             row_data.append(status)
+            
         schedule[group_name] = row_data
         
     return schedule
