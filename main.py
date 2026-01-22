@@ -1,60 +1,106 @@
 import asyncio
 import logging
+import sys
+
 from aiogram import Bot, Dispatcher
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+# Імпорти модулів проекту
+from core.config import config
+from core.logger import setup_logger
+import database.db as db
+
+# Імпорти хендлерів
+from handlers import common, user_settings, schedules, admin
+
+# Імпорти логіки регіонів та сервісів
+from regions.registry import get_active_regions_list
+from services.broadcaster import notify_changes
 from services.checker import check_and_notify_upcoming_outages
 
-# Імпорти наших модулів
-from core.config import config
-import database.db as db
-from handlers import main_router
-from regions.registry import get_active_regions_list
+# Ініціалізація логера перед усім іншим
+setup_logger()
+logger = logging.getLogger(__name__)
 
-# Налаштування логування
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
-
-async def scheduled_updates():
-    """Ця функція запускається планувальником"""
-    logging.info("⏰ Початок планового оновлення даних...")
+async def scheduled_updates(bot: Bot):
+    logger.info("[Scheduler] Start scheduled data update...")
     
-    for region in get_active_regions_list():
+    # Отримуємо тільки активні регіони (де is_active=True)
+    regions = get_active_regions_list()
+    
+    for region in regions:
         try:
-            logging.info(f"🔄 Оновлення регіону: {region.name}")
-            changes = await region.update_data()
-            if changes:
-                logging.info(f"📢 Знайдено зміни в {region.code}: {changes}")
-                # Тут пізніше додамо services.broadcaster.notify_users(region.code, changes)
+            logger.info(f"[Scheduler] Updating region: {region.name}")
+            
+            # Запускаємо воркер регіону (Selenium/Request логіка)
+            # Він повертає список груп, у яких змінився графік
+            changed_groups = await region.update_data()
+            
+            if changed_groups:
+                logger.info(f"[Scheduler] Changes detected in {region.code}: {changed_groups}")
+                # Викликаємо сервіс розсилки
+                await notify_changes(bot, region.code, changed_groups)
+            else:
+                logger.info(f"[Scheduler] No changes for {region.name}.")
+                
         except Exception as e:
-            logging.error(f"❌ Помилка оновлення {region.code}: {e}")
+            logger.error(f"[Scheduler] Update failed for {region.code}: {e}", exc_info=True)
 
 async def main():
-    # 1. Ініціалізація БД
+    """
+    Точка входу в програму.
+    """
+    # 1. Ініціалізація бази даних
     await db.init_db()
-    logging.info("база даних ініціалізована")
+    logger.info("[Main] Database initialized.")
 
-    # 2. Бот і Диспетчер
-    bot = Bot(token=config.BOT_TOKEN)
+    # 2. Налаштування бота
+    bot = Bot(
+        token=config.BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+    )
     dp = Dispatcher()
-    dp.include_router(main_router)
 
-    # 3. Планувальник
+    # 3. Реєстрація роутерів (порядок має значення!)
+    dp.include_router(admin.router)         # Адмінка
+    dp.include_router(common.router)        # /start, загальні кнопки
+    dp.include_router(user_settings.router) # Налаштування регіону/групи
+    dp.include_router(schedules.router)     # Відображення графіків
+
+    # 4. Налаштування планувальника (APScheduler)
     scheduler = AsyncIOScheduler()
-    # Оновлюємо дані кожні 30 хвилин (або як налаштуєш)
-    scheduler.add_job(scheduled_updates, 'cron', minute='0,30')
-    # ПЕРЕВІРКА ВІДКЛЮЧЕНЬ (кожної хвилини)
-    scheduler.add_job(check_and_notify_upcoming_outages, 'interval', minutes=1, args=[bot])
-    scheduler.start()
 
-    # 4. Запуск
-    logging.info("бот стартанув")
+    # ЗАДАЧА 1: Оновлення даних з сайтів (кожні 30 хвилин)
+    # Cron trigger: запускати в 00 та 30 хвилин кожної години
+    scheduler.add_job(scheduled_updates, 'cron', minute='0,30', args=[bot])
+
+    # ЗАДАЧА 2: Перевірка наближення відключень (кожні 60 секунд)
+    # Перевіряє, чи не буде вимкнення через 15 хв
+    scheduler.add_job(check_and_notify_upcoming_outages, 'interval', seconds=60, args=[bot])
+
+    scheduler.start()
+    logger.info("[Main] Scheduler started.")
+
+    # 5. Запуск Polling (отримання повідомлень від Telegram)
+    # Видаляємо вебхук, щоб уникнути конфліктів, і починаємо слухати
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("[Main] Bot started polling.")
+    
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"[Main] Polling error: {e}")
     finally:
         await bot.session.close()
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        # Фікс для Windows пізніше нахуй знесу
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        print("бот стопнутий вручну")
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("[Main] Bot stopped manually.")

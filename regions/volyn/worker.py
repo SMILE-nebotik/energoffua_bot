@@ -7,11 +7,9 @@ import json
 from datetime import datetime
 import pytz 
 
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
+from pyvirtualdisplay import Display
 
 from core.config import config
 import database.db as db
@@ -19,116 +17,123 @@ from database.models import Schedule
 from sqlalchemy import select
 from . import parser 
 
-# Налаштування логера
-logger = logging.getLogger(__name__)
+# Імпортуємо наші нові утиліти
+from core.browser import kill_zombie_processes, clean_temp_files
 
+logger = logging.getLogger(__name__)
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
 PAGE_URL = "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/"
 
-def download_original_image():
-    """Покращена функція скачування картинки"""
-    logger.info("🚀 [Worker] Запуск Chrome (Stealth Mode)...")
+def _download_attempt():
+    """Одна спроба завантаження (внутрішня функція)"""
+    # 1. Чистимо перед запуском
+    kill_zombie_processes()
+    clean_temp_files()
     
-    options = Options()
-    # Обов'язкові налаштування для сервера (без екрану)
-    options.add_argument("--headless=new") 
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    # Маскуємося під звичайний браузер Windows
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    logger.info("🚀 [Worker] Запуск Virtual Display + UC...")
+    display = Display(visible=0, size=(1920, 1080))
+    display.start()
     
     driver = None
     file_content = None
     
     try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
+        options = uc.ChromeOptions()
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-extensions")
         
-        logger.info(f"🌐 [Worker] Відкриваю сторінку: {PAGE_URL}")
+        driver = uc.Chrome(options=options)
+        driver.set_page_load_timeout(60) # Таймаут на завантаження сторінки
+        
+        logger.info(f"🌐 [Worker] Відкриваю: {PAGE_URL}")
         driver.get(PAGE_URL)
         
-        # Чекаємо 15 секунд, щоб сайт точно прогрузився
-        time.sleep(15) 
+        logger.info("⏳ [Worker] Чекаю Cloudflare (20s)...")
+        time.sleep(20) 
         
         target_url = None
 
-        # --- СПОСІБ 1: Шукаємо картинку прямо на сторінці ---
-        logger.info("🔎 [Worker] Шукаю картинку...")
-        all_imgs = driver.find_elements(By.TAG_NAME, "img")
-        for img in all_imgs:
+        # Пошук картинки
+        imgs = driver.find_elements(By.TAG_NAME, "img")
+        for img in imgs:
             try:
                 src = img.get_attribute("src")
-                # Шукаємо ключові слова в посиланні
-                if src and ("GPV" in src or "grafik" in src.lower() or "uploads" in src):
+                if src and ("GPV" in src or "grafik" in src.lower()):
                     target_url = src
-                    logger.info(f"✨ [Worker] Знайдено (Спосіб 1): {src}")
+                    logger.info(f"✨ [Worker] Знайдено: {src}")
                     break
             except: continue
 
-        # --- СПОСІБ 2: Якщо не знайшли, ліземо всередину фреймів ---
         if not target_url:
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
-            logger.info(f"🔎 [Worker] Спосіб 1 не спрацював. Перевіряю {len(iframes)} фреймів...")
-            
             for i in range(len(iframes)):
                 try:
-                    driver.switch_to.default_content()
-                    frames = driver.find_elements(By.TAG_NAME, "iframe")
-                    driver.switch_to.frame(frames[i])
-                    
+                    driver.switch_to.frame(i)
                     inner_imgs = driver.find_elements(By.TAG_NAME, "img")
                     for img in inner_imgs:
-                        src = img.get_attribute("src")
-                        if src and ("GPV" in src or "grafik" in src.lower()):
-                            target_url = src
-                            logger.info(f"✨ [Worker] Знайдено у фреймі #{i}: {src}")
+                        s = img.get_attribute("src")
+                        if s and ("GPV" in s or "grafik" in s.lower()):
+                            target_url = s
                             break
-                except: pass
+                    driver.switch_to.default_content()
+                except: driver.switch_to.default_content()
                 if target_url: break
 
-        # --- Скачуємо файл ---
         if target_url:
             session = requests.Session()
-            # Беремо куки з браузера, щоб сайт думав, що ми той самий користувач
             for cookie in driver.get_cookies():
                 session.cookies.set(cookie['name'], cookie['value'])
             
-            # Додаємо такий самий User-Agent
-            headers = {"User-Agent": options.arguments[-1].split("=")[1]}
-            
+            headers = {"User-Agent": driver.execute_script("return navigator.userAgent;")}
             resp = session.get(target_url, headers=headers, timeout=30)
+            
             if resp.status_code == 200:
                 file_content = resp.content
-                logger.info(f"📥 [Worker] Файл успішно завантажено ({len(file_content)} байт)!")
             else:
-                logger.error(f"❌ [Worker] Помилка скачування файлу: {resp.status_code}")
+                logger.error(f"❌ [Worker] HTTP Error: {resp.status_code}")
         else:
-            # Робимо фото екрану, щоб зрозуміти, що бачить бот
-            debug_file = os.path.join(config.BASE_DIR, "debug_error.png")
-            driver.save_screenshot(debug_file)
-            logger.error(f"❌ [Worker] Картинку не знайдено! Скріншот збережено в {debug_file}")
+            logger.warning("⚠️ [Worker] Картинку не знайдено в цій спробі.")
 
     except Exception as e:
-        logger.error(f"❌ [Worker] Помилка Selenium: {e}")
+        logger.error(f"❌ [Worker] Помилка спроби: {e}")
     finally:
-        if driver: 
+        if driver:
             try: driver.quit()
             except: pass
+        try: display.stop()
+        except: pass
             
     return file_content
 
+def download_with_retries():
+    """Головна функція з логікою повторних спроб"""
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        logger.info(f"🔄 [Worker] Спроба #{attempt} із {max_retries}...")
+        
+        content = _download_attempt()
+        
+        if content:
+            logger.info("✅ [Worker] Успіх!")
+            return content
+        
+        if attempt < max_retries:
+            wait_time = 60 # Чекаємо хвилину перед наступною спробою
+            logger.warning(f"⚠️ [Worker] Невдача. Чекаю {wait_time}сек перед повтором...")
+            time.sleep(wait_time)
+    
+    logger.error("❌ [Worker] Усі спроби вичерпано. Дані не оновлено.")
+    return None
+
 async def run_update():
-    """Логіка оновлення бази"""
-    # 1. Скачуємо
-    image_bytes = await asyncio.to_thread(download_original_image)
+    # Використовуємо функцію з ретраями
+    image_bytes = await asyncio.to_thread(download_with_retries)
     
-    if not image_bytes:
-        return []
+    if not image_bytes: return []
     
-    # 2. Парсимо дату і час
+    # Далі стандартна логіка парсингу...
     ocr_date_str, ocr_time_str = await asyncio.to_thread(parser.get_info_from_image, image_bytes)
-    
     target_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
     if ocr_date_str:
         try:
@@ -136,16 +141,12 @@ async def run_update():
             target_date = f"{y}-{m}-{d}"
         except: pass
 
-    if not ocr_time_str:
-         ocr_time_str = datetime.now(KYIV_TZ).strftime("%H:%M")
+    if not ocr_time_str: ocr_time_str = datetime.now(KYIV_TZ).strftime("%H:%M")
 
-    # 3. Розпізнаємо графік (квадратики)
     new_schedule = await asyncio.to_thread(parser.parse_image, image_bytes)
     if not new_schedule: return []
 
     changed_groups = []
-
-    # 4. Зберігаємо в базу
     async with db.get_session() as session:
         for group_id, hours_data in new_schedule.items():
             stmt = select(Schedule).where(
@@ -156,34 +157,18 @@ async def run_update():
             result = await session.execute(stmt)
             old_record = result.scalar_one_or_none()
             
-            is_changed = False
-            
             if old_record:
-                old_hours = json.loads(old_record.hours_data)
-                if old_hours != hours_data:
-                    is_changed = True
+                if json.loads(old_record.hours_data) != hours_data:
                     old_record.hours_data = json.dumps(hours_data)
                     old_record.site_updated_at = ocr_time_str
+                    changed_groups.append(group_id)
             else:
-                new_record = Schedule(
-                    date=target_date,
-                    region="volyn",
-                    group_code=group_id,
-                    hours_data=json.dumps(hours_data),
-                    site_updated_at=ocr_time_str
-                )
-                session.add(new_record)
-                if target_date == datetime.now(KYIV_TZ).strftime("%Y-%m-%d"):
-                    is_changed = True
-
-            if is_changed:
+                session.add(Schedule(
+                    date=target_date, region="volyn", group_code=group_id,
+                    hours_data=json.dumps(hours_data), site_updated_at=ocr_time_str
+                ))
                 changed_groups.append(group_id)
-        
         await session.commit()
     
-    if changed_groups:
-        logger.info(f"📢 [Update] Є зміни в групах: {changed_groups}")
-    else:
-        logger.info("✅ [Update] Графік актуальний, змін немає.")
-    
+    if changed_groups: logger.info(f"📢 [Update] Зміни: {changed_groups}")
     return changed_groups
