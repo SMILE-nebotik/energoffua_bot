@@ -119,7 +119,7 @@ async def set_notification_mode(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "reset_registration")
 async def reset_user_data(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer() # <--- ДОДАНО (переміщено на початок)
+    await callback.answer()
     
     builder = InlineKeyboardBuilder()
     for reg in get_all_regions_list():

@@ -46,7 +46,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
                 builder.button(text=reg.name, callback_data=callback)
             builder.adjust(1)
             
-            await message.answer("🇺🇦 Оберіть вашу область:", reply_markup=builder.as_markup())
+            await message.answer("Оберіть вашу область:", reply_markup=builder.as_markup())
             await state.set_state(UserSetup.choosing_region)
 
 @router.callback_query(F.data == "region_inactive")
@@ -55,5 +55,5 @@ async def inactive_alert(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "back_to_menu")
 async def back_to_main(callback: types.CallbackQuery):
-    await callback.answer() # <--- ДОДАНО: Миттєва реакція
+    await callback.answer()
     await callback.message.edit_text("🤖 Головне меню", reply_markup=get_main_menu_keyboard())

@@ -1,7 +1,8 @@
 from regions.volyn.adapter import VolynRegion
 from regions.lviv.adapter import LvivRegion
-from regions.kyiv.adapter import KyivRegion # Припускаємо, що ти створив файли
+from regions.kyiv.adapter import KyivRegion
 from regions.rivne.adapter import RivneRegion
+from regions import volyn, lviv
 
 # Список всіх реалізованих класів
 _regions_list = [
@@ -12,8 +13,10 @@ _regions_list = [
 ]
 
 # Словник для швидкого пошуку: {'volyn': VolynRegion(), ...}
-REGIONS = {r.code: r for r in _regions_list}
-
+REGIONS = {
+    "volyn": volyn,
+    "lviv": lviv,
+}
 def get_region(code: str):
     return REGIONS.get(code)
 

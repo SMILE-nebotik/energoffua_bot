@@ -7,13 +7,12 @@ import glob
 logger = logging.getLogger(__name__)
 
 def kill_zombie_processes():
-    """Вбиває старі процеси Chrome, Chromedriver та Xvfb"""
+    """Вбиває старі процеси Chrome, Chromedriver і Xvfb"""
     targets = ['chrome', 'chromedriver', 'Xvfb', 'xvfb']
     killed_count = 0
     
     for proc in psutil.process_iter(['pid', 'name']):
         try:
-            # Перевіряємо, чи процес містить цільове ім'я
             if any(t in proc.info['name'] for t in targets):
                 proc.kill()
                 killed_count += 1
@@ -21,11 +20,9 @@ def kill_zombie_processes():
             pass
             
     if killed_count > 0:
-        logger.info(f"🧹 [Cleaner] Знищено {killed_count} завислих процесів.")
+        logger.info(f"[Cleaner] Знищено {killed_count} завислих процесів.")
 
 def clean_temp_files():
-    """Видаляє тимчасові папки, які створює Undetected Chromedriver"""
-    # Зазвичай вони в /tmp/ і починаються на .com.google.Chrome
     temp_patterns = ["/tmp/.com.google.Chrome*", "/tmp/.org.chromium.Chromium*"]
     deleted_count = 0
     
@@ -36,7 +33,7 @@ def clean_temp_files():
                     shutil.rmtree(path, ignore_errors=True)
                     deleted_count += 1
             except Exception as e:
-                logger.warning(f"⚠️ Не вдалося видалити {path}: {e}")
+                logger.warning(f"Не вдалося видалити {path}: {e}")
                 
     if deleted_count > 0:
-        logger.info(f"🗑 [Cleaner] Видалено {deleted_count} тимчасових папок Chrome.")
+        logger.info(f"[Cleaner] Видалено {deleted_count} тимчасових папок Chrome.")
