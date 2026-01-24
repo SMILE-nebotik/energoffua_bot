@@ -4,8 +4,6 @@ from database.models import Schedule
 from sqlalchemy import select
 import json
 import logging
-
-# Імпортуємо воркер
 from regions.volyn import worker
 
 class VolynRegion(BaseRegion):
@@ -34,7 +32,7 @@ class VolynRegion(BaseRegion):
                 }
             return None
 
-    # ПІДКЛЮЧАЄМО ВОРКЕР
+    # concrete implementation of update_data
     async def update_data(self) -> list[str]:
-        logging.info("🔄 Запуск оновлення даних для Волині...")
+        logging.info("Запуск оновлення даних для волині...")
         return await worker.run_update()

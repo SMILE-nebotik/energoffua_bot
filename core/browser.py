@@ -7,7 +7,6 @@ import glob
 logger = logging.getLogger(__name__)
 
 def kill_zombie_processes():
-    """Вбиває старі процеси Chrome, Chromedriver і Xvfb"""
     targets = ['chrome', 'chromedriver', 'Xvfb', 'xvfb']
     killed_count = 0
     

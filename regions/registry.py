@@ -1,22 +1,25 @@
 from regions.volyn.adapter import VolynRegion
 from regions.lviv.adapter import LvivRegion
 from regions.kyiv.adapter import KyivRegion
-from regions.rivne.adapter import RivneRegion
-from regions import volyn, lviv
 
-# Список всіх реалізованих класів
+
+volyn_region = VolynRegion()
+lviv_region = LvivRegion()
+kyiv_region = KyivRegion()
+
 _regions_list = [
-    VolynRegion(),
-    LvivRegion(),
-    KyivRegion(),
-    RivneRegion()
+    volyn_region,
+    lviv_region,
+    kyiv_region
 ]
 
-# Словник для швидкого пошуку: {'volyn': VolynRegion(), ...}
+
 REGIONS = {
-    "volyn": volyn,
-    "lviv": lviv,
+    "volyn": volyn_region,
+    "lviv": lviv_region,
+    "kyiv": kyiv_region
 }
+
 def get_region(code: str):
     return REGIONS.get(code)
 

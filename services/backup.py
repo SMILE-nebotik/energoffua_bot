@@ -26,7 +26,7 @@ async def backup_database():
         shutil.copy2(db_path, backup_path)
         logger.info(f"[Backup] Success: {filename}")
         
-        # Видалення старих бекапів (> 7 днів)
+        # delete old backups
         cleanup_old_backups()
     except Exception as e:
         logger.error(f"[Backup] Failed: {e}")

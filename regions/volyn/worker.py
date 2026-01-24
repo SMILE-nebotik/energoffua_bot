@@ -17,7 +17,6 @@ from database.models import Schedule
 from sqlalchemy import select
 from . import parser 
 
-# Імпортуємо наші нові утиліти
 from core.browser import kill_zombie_processes, clean_temp_files
 
 logger = logging.getLogger(__name__)
@@ -25,12 +24,10 @@ KYIV_TZ = pytz.timezone('Europe/Kyiv')
 PAGE_URL = "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/"
 
 def _download_attempt():
-    """Одна спроба завантаження (внутрішня функція)"""
-    # 1. Чистимо перед запуском
     kill_zombie_processes()
     clean_temp_files()
     
-    logger.info("🚀 [Worker] Запуск Virtual Display + UC...")
+    logger.info("start with vs display")
     display = Display(visible=0, size=(1920, 1080))
     display.start()
     
@@ -44,13 +41,11 @@ def _download_attempt():
         options.add_argument("--disable-extensions")
         
         driver = uc.Chrome(options=options)
-        driver.set_page_load_timeout(60) # Таймаут на завантаження сторінки
+        driver.set_page_load_timeout(60)
         
-        logger.info(f"🌐 [Worker] Відкриваю: {PAGE_URL}")
+        logger.info(f"[Worker] open: {PAGE_URL}")
         driver.get(PAGE_URL)
-        
-        logger.info("⏳ [Worker] Чекаю Cloudflare (20s)...")
-        time.sleep(20) 
+        time.sleep(10) 
         
         target_url = None
 
@@ -91,12 +86,12 @@ def _download_attempt():
             if resp.status_code == 200:
                 file_content = resp.content
             else:
-                logger.error(f"❌ [Worker] HTTP Error: {resp.status_code}")
+                logger.error(f"[Worker] HTTP Error: {resp.status_code}")
         else:
-            logger.warning("⚠️ [Worker] Картинку не знайдено в цій спробі.")
+            logger.warning("[Worker] Картинку не знайдено в цій спробі.")
 
     except Exception as e:
-        logger.error(f"❌ [Worker] Помилка спроби: {e}")
+        logger.error(f"[Worker] Помилка спроби: {e}")
     finally:
         if driver:
             try: driver.quit()
@@ -110,20 +105,20 @@ def download_with_retries():
     """Головна функція з логікою повторних спроб"""
     max_retries = 3
     for attempt in range(1, max_retries + 1):
-        logger.info(f"🔄 [Worker] Спроба #{attempt} із {max_retries}...")
+        logger.info(f"[Worker] Спроба #{attempt} із {max_retries}...")
         
         content = _download_attempt()
         
         if content:
-            logger.info("✅ [Worker] Успіх!")
+            logger.info("[Worker] Успіх")
             return content
         
         if attempt < max_retries:
-            wait_time = 60 # Чекаємо хвилину перед наступною спробою
-            logger.warning(f"⚠️ [Worker] Невдача. Чекаю {wait_time}сек перед повтором...")
+            wait_time = 60
+            logger.warning(f"[Worker] Невдача. Чекаю {wait_time}сек перед повтором...")
             time.sleep(wait_time)
     
-    logger.error("❌ [Worker] Усі спроби вичерпано. Дані не оновлено.")
+    logger.error("[Worker] Дані не оновлено.")
     return None
 
 async def run_update():
@@ -132,7 +127,6 @@ async def run_update():
     
     if not image_bytes: return []
     
-    # Далі стандартна логіка парсингу...
     ocr_date_str, ocr_time_str = await asyncio.to_thread(parser.get_info_from_image, image_bytes)
     target_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
     if ocr_date_str:
