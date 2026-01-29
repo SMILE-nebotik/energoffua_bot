@@ -21,7 +21,7 @@ class UserSettings(StatesGroup):
 class AdminState(StatesGroup):
     waiting_for_broadcast = State()
 
-# ФОРМАТУВАННЯ ТЕКСТУ ГРАФІКА тестово
+# formatting function for schedule text
 def format_schedule_text(schedule_list, update_time=None):
     if not schedule_list: return "Дані відсутні."
     
@@ -82,7 +82,7 @@ def get_main_menu_keyboard():
     )
     return builder.as_markup()
 
-# старт для нових
+# start for new user
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_data = await database.get_user_data(message.from_user.id)
@@ -111,10 +111,8 @@ async def process_group(message: types.Message, state: FSMContext):
 async def process_time(message: types.Message, state: FSMContext):
     raw_input = message.text.strip()
     
-    # валідацію плюс нормалізація через бібліотеку re
+    # validation and normalization
     normalized_input = re.sub(r"[.,\s-]+", ":", raw_input)
-    
-    # логіка розпізнавання
     hours, minutes = 0, 0
     
     try:
@@ -213,7 +211,7 @@ async def send_schedule_message(message: types.Message, group: str, is_personal:
         if "message is not modified" in str(e):
             return
         
-        # нове повідомлення якщо не редагується
+        # create new message if edit fails
         await message.answer(response, parse_mode="Markdown", reply_markup=builder.as_markup())
     except Exception:
         await message.answer(response, parse_mode="Markdown", reply_markup=builder.as_markup())

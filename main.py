@@ -1,145 +1,102 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
-import pytz
+import sys
+import os
 
-from middlewares import AntiFloodMiddleware
 from aiogram import Bot, Dispatcher
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from config import API_TOKEN, ADMIN_IDS
-import database
-import handlers
-import services 
 
+from core.config import config
+from core.logger import setup_logger
+import database.db as db
 
-logging.basicConfig(level=logging.INFO)
-KYIV_TZ = pytz.timezone('Europe/Kyiv')
+from handlers import common, user_settings, schedules, admin
+from regions.registry import get_active_regions_list
+from services.broadcaster import notify_changes
+from services.checker import check_and_notify_upcoming_outages
+from middlewares.throttling import ThrottlingMiddleware
+from services.backup import backup_database
+from services.monitoring import system_health_check
 
-# перевірка години
-def is_night_time():
-    hour = datetime.now(KYIV_TZ).hour
-    return hour >= 23 or hour < 7
+setup_logger()
+logger = logging.getLogger(__name__)
 
-# Щоденний звіт
-async def check_daily_alert(bot: Bot):
-    now_kyiv = datetime.now(KYIV_TZ).strftime("%H:%M")
-    today_str = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
-    
-    users = await database.get_all_users_full()
-    
-    for user_id, group, alert_time, mode in users:
-        if mode == 'off': continue
-        
-        if alert_time == now_kyiv:
-            data = await database.get_schedule_for_group(today_str, group)
-            if data:
-                schedule, updated_at = data
-                text = handlers.format_schedule_text(schedule, updated_at)
-                try:
-                    await bot.send_message(user_id, f"Ваш щоденний звіт ({group}):\n\n{text}")
-                except Exception as e:
-                    logging.error(f"Помилка відправки {user_id}: {e}")
+# cehck root in bot
+def check_security():
+    if hasattr(os, 'getuid'):
+        if os.getuid() == 0:
+            logger.warning("[Security] Bot is running as ROOT! It is recommended to run as a standard user.")
 
-# апдейт бази і сооб про зміни
-async def scheduled_update_and_notify(bot: Bot):
-    try:
-        changed_groups = await services.update_schedule_database()
-        
-        if changed_groups is None:
-            return
-
-        if changed_groups:
-            logging.info(f"Виявлено зміни в групах: {changed_groups}")
-            today_str = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
-            
-            users = await database.get_all_users_full()
-            
-            for user_id, group, _, mode in users:
-                if group in changed_groups:
-                    if mode == 'off': continue
-                    if mode == 'no_night' and is_night_time(): continue
-                    
-                    data = await database.get_schedule_for_group(today_str, group)
-                    if data:
-                        schedule, updated_at = data
-                        text = handlers.format_schedule_text(schedule, updated_at)
-                        
-                        try:
-                            await bot.send_message(
-                                user_id,
-                                f"⚠️ **УВАГА! ГРАФІК ЗМІНЕНО!**\n"
-                                f"Оновлені дані для черги {group}:\n\n{text}"
-                            )
-                        except Exception as e:
-                            logging.error(f"Failed to notify change {user_id}: {e}")
-                            
-    except Exception as e:
-        logging.error(f"Global update error: {e}")
-        for admin_id in ADMIN_IDS:
-            try:
-                await bot.send_message(admin_id, f"\n помилка: {e}")
-            except: pass
-
-
-# попередження за 15 хвилин
-async def check_upcoming_outages(bot: Bot):
-    now_kyiv = datetime.now(KYIV_TZ)
-    future_time = now_kyiv + timedelta(minutes=15)
-    future_time_str = future_time.strftime("%H:%M")
-    today_str = now_kyiv.strftime("%Y-%m-%d")
-    
-    hour = future_time.hour
-    minute = future_time.minute
-    cell_index = hour * 2 + (1 if minute >= 30 else 0)
-    
-    if cell_index > 47: return
-
-    users = await database.get_all_users_full()
-    
-    for user_id, group, _, mode in users:
-        if mode == 'off': continue
-        if mode == 'no_night' and is_night_time(): continue
-
-        data = await database.get_schedule_for_group(today_str, group)
-        if data:
-            schedule, _ = data
-            if len(schedule) > cell_index:
-                status_future = schedule[cell_index]
-                status_now = 'on'
-                if cell_index > 0: status_now = schedule[cell_index - 1]
-                
-                if status_future == 'off' and status_now == 'on':
-                    if minute == 45 or minute == 15:
-                        try:
-                            await bot.send_message(
-                                user_id, 
-                                f"⚠️ **Увага!**\nЧерез 15 хвилин ({future_time_str}) планується відключення!"
-                            )
-                        except: pass
+async def scheduled_updates(bot: Bot):
+    logger.info("[Scheduler] Start scheduled data update...")
+    regions = get_active_regions_list()
+    for region in regions:
+        try:
+            logger.info(f"[Scheduler] Updating region: {region.name}")
+            changed_groups = await region.update_data()
+            if changed_groups:
+                logger.info(f"[Scheduler] Changes detected in {region.code}: {changed_groups}")
+                await notify_changes(bot, region.code, changed_groups)
+            else:
+                logger.info(f"[Scheduler] No changes for {region.name}.")
+        except Exception as e:
+            logger.error(f"[Scheduler] Update failed for {region.code}: {e}", exc_info=True)
 
 async def main():
-    await database.create_table()
-    bot = Bot(token=API_TOKEN)
+    check_security()
+    
+    await db.init_db()
+    logger.info("[Main] Database initialized.")
+
+    bot = Bot(
+        token=config.BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+    )
     dp = Dispatcher()
-    dp.message.middleware(AntiFloodMiddleware(time_limit=1)) # 1 секунда затримки
-    dp.include_router(handlers.router)
 
-    scheduler = AsyncIOScheduler(timezone=KYIV_TZ)
+    # connect throttling middleware
+    dp.message.middleware(ThrottlingMiddleware(rate_limit=1.0))
+    dp.callback_query.middleware(ThrottlingMiddleware(rate_limit=1.0))
 
-    scheduler.add_job(scheduled_update_and_notify, 'cron', minute='0,30', args=[bot])
-    scheduler.add_job(check_upcoming_outages, 'cron', minute='*', args=[bot])
-    scheduler.add_job(check_daily_alert, 'cron', minute='*', args=[bot])
-    scheduler.add_job(services.backup_database, 'cron', hour=3, minute=0) # щоденний бекап о 3:00
+    # register routers
+    dp.include_router(admin.router)
+    dp.include_router(common.router)
+    dp.include_router(user_settings.router)
+    dp.include_router(schedules.router)
+
+    scheduler = AsyncIOScheduler()
+
+    # cehck awery 30 minutes for updates
+    scheduler.add_job(scheduled_updates, 'cron', minute='0,30', args=[bot])
     
+    # cehck every minute for upcoming outages
+    scheduler.add_job(check_and_notify_upcoming_outages, 'interval', seconds=60, args=[bot])
+    
+    # monitoring system health every hour
+    scheduler.add_job(system_health_check, 'interval', minutes=60, args=[bot])
+    
+    # backup database every day at 3:00 AM
+    scheduler.add_job(backup_database, 'cron', hour=3, minute=0)
+
     scheduler.start()
-    
-    print("start ex")
-    
+    logger.info("[Main] Scheduler started.")
+
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    logger.info("[Main] Bot started polling.")
+    
+    try:
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"[Main] Polling error: {e}")
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        print("bot stopped")
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("[Main] Bot stopped manually.")
