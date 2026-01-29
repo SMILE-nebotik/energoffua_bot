@@ -1,3 +1,4 @@
+import asyncio
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -9,19 +10,20 @@ import database.db as db
 from database.models import User
 from handlers.states import AdminState
 from regions.registry import get_active_regions_list
+from services.broadcaster import notify_changes
+
+# Імпортуємо очистку процесів
+from core.browser import kill_zombie_processes, clean_temp_files
 
 router = Router()
 
-# Перевірка на адміна
 def is_admin(user_id: int) -> bool:
     return user_id in config.ADMIN_IDS
 
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
-    if not is_admin(message.from_user.id):
-        return
+    if not is_admin(message.from_user.id): return
 
-    # підрахунок користувачів
     async with db.get_session() as session:
         result = await session.execute(select(User))
         users_count = len(result.scalars().all())
@@ -36,35 +38,52 @@ async def cmd_admin(message: types.Message):
         reply_markup=builder.as_markup(resize_keyboard=True)
     )
 
-# оновлення бази командою
+# --- ВИПРАВЛЕНИЙ ОБРОБНИК КНОПКИ ---
 @router.message(F.text == "Оновити базу")
 async def admin_force_update(message: types.Message):
     if not is_admin(message.from_user.id): return
 
-    await message.answer("⏳ Починаю оновлення всіх активних регіонів...")
+    await message.answer("⏳ Починаю повне оновлення (це займе час)...")
     
     report = []
+    regions = get_active_regions_list()
     
-    for region in get_active_regions_list():
+    for region in regions:
+        # 1. ЧИСТИМО ПЕРЕД ЗАПУСКОМ (Як у main.py)
+        kill_zombie_processes()
+        clean_temp_files()
+        
         try:
+            await message.answer(f"🔄 Оновлюю: {region.name}...")
+            
+            # 2. Запускаємо воркер
             changes = await region.update_data()
+            
             status = f"✅ {region.name}: "
             if changes:
-                status += f"Зміни в {changes}"
+                status += f"ЗМІНИ! ({len(changes)} груп)"
+                await notify_changes(message.bot, region.code, changes)
             else:
                 status += "Без змін"
+            
             report.append(status)
+            
         except Exception as e:
             report.append(f"❌ {region.name}: Помилка ({e})")
+        
+        # 3. ПАУЗА БЕЗПЕКИ
+        await asyncio.sleep(2)
+    
+    # Фінальна чистка
+    kill_zombie_processes()
     
     await message.answer("\n".join(report))
 
-# розсилка(закос під рекламу)
+# --- Розсилка ---
 @router.message(F.text == "Розсилка")
 async def admin_broadcast_start(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id): return
-    
-    await message.answer("Напиши текст оголошення чи cancel для відміни:", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer("Напиши текст оголошення чи cancel:", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(AdminState.waiting_for_broadcast)
 
 @router.message(Command("cancel"), AdminState.waiting_for_broadcast)
@@ -73,23 +92,24 @@ async def cancel_broadcast(message: types.Message, state: FSMContext):
     await message.answer("Скасовано.")
 
 @router.message(AdminState.waiting_for_broadcast)
-async def admin_broadcast_send(message: types.Message, state: FSMContext, bot):
+async def admin_broadcast_send(message: types.Message, state: FSMContext):
     text = message.text
+    bot = message.bot
     
-    # Отримуємо всіх юзерів
     async with db.get_session() as session:
         result = await session.execute(select(User))
         users = result.scalars().all()
     
     count = 0
-    await message.answer(f"Починаю розсилку на {len(users)} користувачів")
+    await message.answer(f"Починаю розсилку на {len(users)} юзерів...")
     
     for user in users:
         try:
             await bot.send_message(user.user_id, f"📢 **ОГОЛОШЕННЯ**\n\n{text}", parse_mode="Markdown")
             count += 1
+            await asyncio.sleep(0.05)
         except Exception:
             pass
             
-    await message.answer(f"Успішно надіслано: {count} з {len(users)}")
+    await message.answer(f"Успішно: {count} з {len(users)}")
     await state.clear()

@@ -2,7 +2,7 @@ import logging
 import asyncio
 from aiogram import Bot
 from sqlalchemy import select
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 import database.db as db
@@ -19,7 +19,10 @@ async def notify_changes(bot: Bot, region_code: str, changed_groups: list[str]):
     reg_obj = get_region(region_code)
     if not reg_obj: return
 
-    today_str = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+    # Отримуємо дати для перевірки
+    now_dt = datetime.now(KYIV_TZ)
+    today_str = now_dt.strftime("%Y-%m-%d")
+    tomorrow_str = (now_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
     async with db.get_session() as session:
         stmt = select(User).where(
@@ -34,13 +37,29 @@ async def notify_changes(bot: Bot, region_code: str, changed_groups: list[str]):
 
     logger.info(f"[Broadcaster] Розсилка для {len(users)} юзерів ({region_code}).")
 
+
     schedules_cache = {}
     
     for group in changed_groups:
-        data = await reg_obj.get_schedule(group, today_str)
-        if data:
-            block = format_day_block(f"СЬОГОДНІ ({today_str})", data['hours'], data['updated_at'])
-            schedules_cache[group] = block
+        # check for tomorrow and today
+        data_tmr = await reg_obj.get_schedule(group, tomorrow_str)
+        data_today = await reg_obj.get_schedule(group, today_str)
+
+        msg_header = ""
+        text_block = ""
+
+        if data_tmr:
+            # new schedule
+            msg_header = f"📅 **З'ЯВИВСЯ ГРАФІК НА ЗАВТРА ({tomorrow_str})**"
+            text_block = format_day_block(f"ЗАВТРА ({tomorrow_str})", data_tmr['hours'], data_tmr['updated_at'])
+        elif data_today:
+            # new schedule for today
+            msg_header = "⚠️ **УВАГА! ЗМІНА ГРАФІКА!**"
+            text_block = format_day_block(f"СЬОГОДНІ ({today_str})", data_today['hours'], data_today['updated_at'])
+        else:
+            continue
+            
+        schedules_cache[group] = (msg_header, text_block)
 
     count_sent = 0
     for user in users:
@@ -49,13 +68,15 @@ async def notify_changes(bot: Bot, region_code: str, changed_groups: list[str]):
             if current_hour >= 23 or current_hour < 7:
                 continue
 
-        text_block = schedules_cache.get(user.group_number)
-        if not text_block: continue
+        cache_item = schedules_cache.get(user.group_number)
+        if not cache_item: continue
+        
+        header, body = cache_item
 
         msg_text = (
-            f"⚠️ **УВАГА! ЗМІНА ГРАФІКА!**\n"
+            f"{header}\n"
             f"📍 {reg_obj.name} | Черга {user.group_number}\n\n"
-            f"{text_block}"
+            f"{body}"
         )
 
         try:

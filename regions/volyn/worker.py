@@ -7,7 +7,6 @@ import json
 from datetime import datetime
 import pytz 
 
-import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from pyvirtualdisplay import Display
 
@@ -17,17 +16,18 @@ from database.models import Schedule
 from sqlalchemy import select
 from . import parser 
 
-from core.browser import kill_zombie_processes, clean_temp_files
+# Import shared tools from core
+from core.browser import get_safe_driver
+# Note: kill_zombie_processes and clean_temp_files removed from here to avoid conflicts
 
 logger = logging.getLogger(__name__)
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
 PAGE_URL = "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/"
 
 def _download_attempt():
-    kill_zombie_processes()
-    clean_temp_files()
+    # Cleanup removed from here. It is now handled in main.py
     
-    logger.info("start with vs display")
+    logger.info("[Worker] Starting virtual display...")
     display = Display(visible=0, size=(1920, 1080))
     display.start()
     
@@ -35,31 +35,28 @@ def _download_attempt():
     file_content = None
     
     try:
-        options = uc.ChromeOptions()
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-extensions")
-        
-        driver = uc.Chrome(options=options)
+        # 2. Use the shared driver function
+        driver = get_safe_driver(version_main=144)
         driver.set_page_load_timeout(60)
         
-        logger.info(f"[Worker] open: {PAGE_URL}")
+        logger.info(f"[Worker] Opening: {PAGE_URL}")
         driver.get(PAGE_URL)
         time.sleep(10) 
         
         target_url = None
 
-        # Пошук картинки
+        # Searching for image
         imgs = driver.find_elements(By.TAG_NAME, "img")
         for img in imgs:
             try:
                 src = img.get_attribute("src")
                 if src and ("GPV" in src or "grafik" in src.lower()):
                     target_url = src
-                    logger.info(f"✨ [Worker] Знайдено: {src}")
+                    logger.info(f"✨ [Worker] Found image: {src}")
                     break
             except: continue
 
+        # Fallback to iframes if needed
         if not target_url:
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
             for i in range(len(iframes)):
@@ -75,6 +72,7 @@ def _download_attempt():
                 except: driver.switch_to.default_content()
                 if target_url: break
 
+        # Downloading content
         if target_url:
             session = requests.Session()
             for cookie in driver.get_cookies():
@@ -88,10 +86,10 @@ def _download_attempt():
             else:
                 logger.error(f"[Worker] HTTP Error: {resp.status_code}")
         else:
-            logger.warning("[Worker] Картинку не знайдено в цій спробі.")
+            logger.warning("[Worker] Image not found in this attempt.")
 
     except Exception as e:
-        logger.error(f"[Worker] Помилка спроби: {e}")
+        logger.error(f"[Worker] Attempt failed: {e}")
     finally:
         if driver:
             try: driver.quit()
@@ -102,27 +100,26 @@ def _download_attempt():
     return file_content
 
 def download_with_retries():
-    """Головна функція з логікою повторних спроб"""
+    """Main function with retry logic"""
     max_retries = 3
     for attempt in range(1, max_retries + 1):
-        logger.info(f"[Worker] Спроба #{attempt} із {max_retries}...")
+        logger.info(f"[Worker] Attempt #{attempt} of {max_retries}...")
         
         content = _download_attempt()
         
         if content:
-            logger.info("[Worker] Успіх")
+            logger.info("[Worker] Success")
             return content
         
         if attempt < max_retries:
             wait_time = 60
-            logger.warning(f"[Worker] Невдача. Чекаю {wait_time}сек перед повтором...")
+            logger.warning(f"[Worker] Failed. Waiting {wait_time}s before retry...")
             time.sleep(wait_time)
     
-    logger.error("[Worker] Дані не оновлено.")
+    logger.error("[Worker] Data not updated.")
     return None
 
 async def run_update():
-    # Використовуємо функцію з ретраями
     image_bytes = await asyncio.to_thread(download_with_retries)
     
     if not image_bytes: return []
@@ -164,5 +161,5 @@ async def run_update():
                 changed_groups.append(group_id)
         await session.commit()
     
-    if changed_groups: logger.info(f"📢 [Update] Зміни: {changed_groups}")
+    if changed_groups: logger.info(f"📢 [Update] Changes detected: {changed_groups}")
     return changed_groups

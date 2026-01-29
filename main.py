@@ -12,84 +12,76 @@ from core.config import config
 from core.logger import setup_logger
 import database.db as db
 
-from handlers import common, user_settings, schedules, admin
+from handlers import admin, schedules, user_settings, common
 from regions.registry import get_active_regions_list
 from services.broadcaster import notify_changes
 from services.checker import check_and_notify_upcoming_outages
 from middlewares.throttling import ThrottlingMiddleware
 from services.backup import backup_database
 from services.monitoring import system_health_check
+from core.browser import kill_zombie_processes, clean_temp_files
 
 setup_logger()
 logger = logging.getLogger(__name__)
 
-# cehck root in bot
-def check_security():
-    if hasattr(os, 'getuid'):
-        if os.getuid() == 0:
-            logger.warning("[Security] Bot is running as ROOT! It is recommended to run as a standard user.")
-
 async def scheduled_updates(bot: Bot):
-    logger.info("[Scheduler] Start scheduled data update...")
+    """Оновлення даних для всіх регіонів послідовно."""
+    logger.info("[Scheduler] Початок планового оновлення...")
     regions = get_active_regions_list()
+    
     for region in regions:
+        kill_zombie_processes()
+        clean_temp_files()
         try:
-            logger.info(f"[Scheduler] Updating region: {region.name}")
+            logger.info(f"[Scheduler] Оновлюю: {region.name}")
             changed_groups = await region.update_data()
             if changed_groups:
-                logger.info(f"[Scheduler] Changes detected in {region.code}: {changed_groups}")
+                logger.info(f"[Scheduler] Зміни в {region.code}: {changed_groups}")
                 await notify_changes(bot, region.code, changed_groups)
-            else:
-                logger.info(f"[Scheduler] No changes for {region.name}.")
         except Exception as e:
-            logger.error(f"[Scheduler] Update failed for {region.code}: {e}", exc_info=True)
+            logger.error(f"[Scheduler] Помилка в {region.name}: {e}")
+        await asyncio.sleep(2)
+    
+    kill_zombie_processes()
+    logger.info("[Scheduler] Всі регіони оброблено.")
 
 async def main():
-    check_security()
-    
     await db.init_db()
-    logger.info("[Main] Database initialized.")
+    logger.info("[Main] База даних ініціалізована.")
 
-    bot = Bot(
-        token=config.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
-    )
+    bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
     dp = Dispatcher()
 
-    # connect throttling middleware
-    dp.message.middleware(ThrottlingMiddleware(rate_limit=1.0))
-    dp.callback_query.middleware(ThrottlingMiddleware(rate_limit=1.0))
+    # Мідлварі
+    dp.message.middleware(ThrottlingMiddleware(rate_limit=0.5))
+    dp.callback_query.middleware(ThrottlingMiddleware(rate_limit=0.5))
 
-    # register routers
+    # ПРАВИЛЬНИЙ порядок роутерів
     dp.include_router(admin.router)
-    dp.include_router(common.router)
-    dp.include_router(user_settings.router)
     dp.include_router(schedules.router)
+    dp.include_router(user_settings.router)
+    dp.include_router(common.router)
 
+    # Шедулер
     scheduler = AsyncIOScheduler()
-
-    # cehck awery 30 minutes for updates
     scheduler.add_job(scheduled_updates, 'cron', minute='0,30', args=[bot])
-    
-    # cehck every minute for upcoming outages
     scheduler.add_job(check_and_notify_upcoming_outages, 'interval', seconds=60, args=[bot])
-    
-    # monitoring system health every hour
     scheduler.add_job(system_health_check, 'interval', minutes=60, args=[bot])
-    
-    # backup database every day at 3:00 AM
     scheduler.add_job(backup_database, 'cron', hour=3, minute=0)
-
+    
     scheduler.start()
-    logger.info("[Main] Scheduler started.")
+    logger.info("[Main] Шедулер запущено.")
 
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("[Main] Bot started polling.")
     
+    # Запуск оновлення при старті
+    asyncio.create_task(scheduled_updates(bot))
+
+    logger.info("[Main] Бот почав опитування.")
     try:
         await dp.start_polling(bot)
     except Exception as e:
-        logger.error(f"[Main] Polling error: {e}")
+        logger.error(f"[Main] Помилка: {e}")
     finally:
         await bot.session.close()
 
@@ -99,4 +91,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("[Main] Bot stopped manually.")
+        logger.info("[Main] Бот зупинений.")

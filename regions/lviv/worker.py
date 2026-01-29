@@ -1,110 +1,122 @@
-import logging
 import asyncio
-import time
+import logging
 import json
 from datetime import datetime
 import pytz
-
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from pyvirtualdisplay import Display
 from sqlalchemy import select
+import time
 
-from core.browser import kill_zombie_processes, clean_temp_files
+# Import shared core utilities
+from core.browser import get_safe_driver
+# Note: cleanup functions removed from here
+
 import database.db as db
 from database.models import Schedule
 from . import parser
 
 logger = logging.getLogger(__name__)
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
+
 PAGE_URL = "https://poweron.loe.lviv.ua/"
 
-def fetch_html_content():
-    """Завантажує HTML сторінку з сайту Львівобленерго."""
-    kill_zombie_processes()
-    clean_temp_files()
-    
-    display = Display(visible=0, size=(1920, 1080))
-    display.start()
+def _download_text_page():
+    """
+    Downloads HTML content from Lviv Oblenergo (Text Version).
+    """
+    # Cleanup removed from here to avoid killing active sessions
     
     driver = None
-    html_source = None
+    page_source = None
     
     try:
-        options = uc.ChromeOptions()
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
+        # Use shared driver with fixed version 144
+        driver = get_safe_driver(version_main=144, headless=True)
+        driver.set_page_load_timeout(30)
         
-        driver = uc.Chrome(options=options)
-        driver.set_page_load_timeout(60)
-        
-        logger.info(f"[Lviv] Connecting to {PAGE_URL}")
+        logger.info(f"[LvivWorker] Opening: {PAGE_URL}")
         driver.get(PAGE_URL)
         
-        # Чекаємо завантаження скриптів/таблиці
-        time.sleep(10)
+        # Text sites load fast, but a small wait ensures safety
+        time.sleep(2)
         
-        # Отримуємо чистий HTML
-        html_source = driver.page_source
-        logger.info(f"[Lviv] Page downloaded. Size: {len(html_source)} bytes")
+        page_source = driver.page_source
+        logger.info(f"[LvivWorker] Downloaded {len(page_source)} bytes.")
 
     except Exception as e:
-        logger.error(f"[Lviv] Download error: {e}")
+        logger.error(f"[LvivWorker] Download failed: {e}")
     finally:
         if driver:
             try: driver.quit()
             except: pass
-        try: display.stop()
-        except: pass
             
-    return html_source
+    return page_source
+
+def download_with_retries():
+    """Retry logic."""
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        content = _download_text_page()
+        if content:
+            return content
+        logger.warning(f"[LvivWorker] Attempt {attempt} failed, retrying...")
+        
+    logger.error("[LvivWorker] Failed to update data after retries.")
+    return None
 
 async def update_data():
-    """Основна функція оновлення даних для регіону Львів."""
-    html_content = await asyncio.to_thread(fetch_html_content)
+    """
+    Main update function.
+    """
+    html_content = await asyncio.to_thread(download_with_retries)
+    if not html_content: return []
+
+    target_date, update_time, schedule_data = parser.parse_lviv_text_data(html_content)
     
-    if not html_content:
+    if not schedule_data:
+        logger.warning("[LvivWorker] Parser returned empty schedule.")
         return []
 
-    # Парсимо HTML (логіка в parser.py)
-    # Повертає словник: {'1.1': {'00-01': 'no', ...}, ...}
-    new_schedule = await asyncio.to_thread(parser.parse_lviv_html, html_content)
+    if not target_date:
+        target_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+        logger.warning(f"[LvivWorker] Date not found in text, using system date: {target_date}")
     
-    if not new_schedule:
-        logger.warning("[Lviv] Failed to parse schedule from HTML.")
-        return []
+    if not update_time:
+        update_time = datetime.now(KYIV_TZ).strftime("%H:%M")
+
+    logger.info(f"[LvivWorker] Processing schedule for DATE: {target_date} (Updated: {update_time})")
 
     changed_groups = []
-    today_str = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
-    update_time = datetime.now(KYIV_TZ).strftime("%H:%M")
-
+    
     async with db.get_session() as session:
-        for group_code, hours_data in new_schedule.items():
+        for group_id, hours_list in schedule_data.items():
             stmt = select(Schedule).where(
-                Schedule.date == today_str,
+                Schedule.date == target_date,
                 Schedule.region == "lviv",
-                Schedule.group_code == group_code
+                Schedule.group_code == group_id
             )
             result = await session.execute(stmt)
-            record = result.scalar_one_or_none()
+            old_record = result.scalar_one_or_none()
             
-            json_data = json.dumps(hours_data)
+            new_json = json.dumps(hours_list)
             
-            if record:
-                if record.hours_data != json_data:
-                    record.hours_data = json_data
-                    record.site_updated_at = update_time
-                    changed_groups.append(group_code)
+            if old_record:
+                if old_record.hours_data != new_json:
+                    old_record.hours_data = new_json
+                    old_record.site_updated_at = update_time
+                    changed_groups.append(group_id)
             else:
                 session.add(Schedule(
-                    date=today_str,
-                    region="lviv",
-                    group_code=group_code,
-                    hours_data=json_data,
+                    date=target_date, 
+                    region="lviv", 
+                    group_code=group_id,
+                    hours_data=new_json, 
                     site_updated_at=update_time
                 ))
-                changed_groups.append(group_code)
+                changed_groups.append(group_id)
         
         await session.commit()
-    
+
+    if changed_groups:
+        logger.info(f"📢 [Lviv] Changes detected for groups: {changed_groups}")
+        
     return changed_groups
