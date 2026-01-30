@@ -23,7 +23,7 @@ def get_info_from_image(image_bytes):
         date_crop = img.crop(DATE_AREA)
         text = pytesseract.image_to_string(date_crop, lang='ukr+eng', config='--psm 6')
         text = text.replace("\n", " ")
-        logging.info(f"🔍 OCR текст: '{text}'")
+        logging.info(f"OCR текст: '{text}'")
         
         found_date = None
         found_time = None

@@ -56,7 +56,7 @@ async def main():
     dp.message.middleware(ThrottlingMiddleware(rate_limit=0.5))
     dp.callback_query.middleware(ThrottlingMiddleware(rate_limit=0.5))
 
-    # ПРАВИЛЬНИЙ порядок роутерів
+    # роутер
     dp.include_router(admin.router)
     dp.include_router(schedules.router)
     dp.include_router(user_settings.router)
