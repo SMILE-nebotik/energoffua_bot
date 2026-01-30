@@ -15,8 +15,6 @@ import database.db as db
 from database.models import Schedule
 from sqlalchemy import select
 from . import parser 
-
-# Import shared tools from core
 from core.browser import get_safe_driver
 # Note: kill_zombie_processes and clean_temp_files removed from here to avoid conflicts
 

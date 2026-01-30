@@ -24,3 +24,5 @@ debug_page.html
 
 *.db
 bot_database.db
+
+*.log
