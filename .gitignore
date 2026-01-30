@@ -22,5 +22,5 @@ schedule_screenshot.png
 *.html
 debug_page.html
 
-bot_users.db
+*.db
 bot_database.db
