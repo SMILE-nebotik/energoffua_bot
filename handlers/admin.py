@@ -1,4 +1,6 @@
 import asyncio
+import os
+import signal
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -11,8 +13,6 @@ from database.models import User
 from handlers.states import AdminState
 from regions.registry import get_active_regions_list
 from services.broadcaster import notify_changes
-
-# Імпортуємо очистку процесів
 from core.browser import kill_zombie_processes, clean_temp_files
 
 router = Router()
@@ -31,32 +31,41 @@ async def cmd_admin(message: types.Message):
     builder = ReplyKeyboardBuilder()
     builder.button(text="Оновити базу")
     builder.button(text="Розсилка")
-    builder.adjust(2)
+    builder.button(text="🔄 Перезапустити бота")
+    builder.adjust(2, 1)
     
     await message.answer(
-        f"Адмін-панель\n Користувачів у базі: {users_count}", 
-        reply_markup=builder.as_markup(resize_keyboard=True)
+        f"⚙️ **Адмін-панель**\n👤 Користувачів у базі: {users_count}", 
+        reply_markup=builder.as_markup(resize_keyboard=True),
+        parse_mode="Markdown"
     )
 
-# --- ВИПРАВЛЕНИЙ ОБРОБНИК КНОПКИ ---
+# restart bot
+@router.message(F.text == "🔄 Перезапустити бота")
+async def admin_restart_bot(message: types.Message):
+    if not is_admin(message.from_user.id): return
+
+    await message.answer("♻️ Бот перезавантажується... (Systemd запустить його знову)")
+    
+    await asyncio.sleep(1)
+    os.kill(os.getpid(), signal.SIGTERM)
+
+# udate database
 @router.message(F.text == "Оновити базу")
 async def admin_force_update(message: types.Message):
     if not is_admin(message.from_user.id): return
 
-    await message.answer("⏳ Починаю повне оновлення (це займе час)...")
+    await message.answer("Починаю повне оновлення (це займе час)...")
     
     report = []
     regions = get_active_regions_list()
     
     for region in regions:
-        # 1. ЧИСТИМО ПЕРЕД ЗАПУСКОМ (Як у main.py)
         kill_zombie_processes()
         clean_temp_files()
         
         try:
             await message.answer(f"🔄 Оновлюю: {region.name}...")
-            
-            # 2. Запускаємо воркер
             changes = await region.update_data()
             
             status = f"✅ {region.name}: "
@@ -71,25 +80,23 @@ async def admin_force_update(message: types.Message):
         except Exception as e:
             report.append(f"❌ {region.name}: Помилка ({e})")
         
-        # 3. ПАУЗА БЕЗПЕКИ
         await asyncio.sleep(2)
     
-    # Фінальна чистка
     kill_zombie_processes()
     
     await message.answer("\n".join(report))
 
-# --- Розсилка ---
+# broadcast message
 @router.message(F.text == "Розсилка")
 async def admin_broadcast_start(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id): return
-    await message.answer("Напиши текст оголошення чи cancel:", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer("Напиши текст оголошення чи /cancel:", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(AdminState.waiting_for_broadcast)
 
 @router.message(Command("cancel"), AdminState.waiting_for_broadcast)
 async def cancel_broadcast(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("Скасовано.")
+    await cmd_admin(message)
 
 @router.message(AdminState.waiting_for_broadcast)
 async def admin_broadcast_send(message: types.Message, state: FSMContext):
@@ -113,3 +120,4 @@ async def admin_broadcast_send(message: types.Message, state: FSMContext):
             
     await message.answer(f"Успішно: {count} з {len(users)}")
     await state.clear()
+    await cmd_admin(message)
