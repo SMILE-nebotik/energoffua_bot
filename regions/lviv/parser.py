@@ -33,22 +33,22 @@ def parse_lviv_text_data(html_content):
         if not group_match: continue
             
         group_id = group_match.group(1)
-        daily_schedule = ["on"] * 24 # По замовчуванню світло є
+        daily_schedule = ["on"] * 48 
         
         if "немає" in line.lower():
-            # Шукаємо всі проміжки часу
             intervals = re.findall(r"(\d{2}:\d{2})\s+до\s+(\d{2}:\d{2})", line)
             for start_str, end_str in intervals:
                 try:
-                    s_h = int(start_str.split(':')[0])
-                    e_h = int(end_str.split(':')[0])
-                    e_m = int(end_str.split(':')[1])
+                    # Перетворюємо час у індекси (0-47)
+                    s_h, s_m = map(int, start_str.split(':'))
+                    e_h, e_m = map(int, end_str.split(':'))
                     
-                    # Якщо кінець 22:30, то 22-га година теж "off"
-                    end_hour = e_h + (1 if e_m > 0 else 0)
+                    start_idx = s_h * 2 + (1 if s_m >= 30 else 0)
+                    end_idx = e_h * 2 + (1 if e_m >= 30 else 0)
                     
-                    for h in range(s_h, min(end_hour, 24)):
-                        daily_schedule[h] = "off"
+                    # Заповнюємо проміжок "відсутністю світла"
+                    for i in range(start_idx, min(end_idx, 48)):
+                        daily_schedule[i] = "off"
                 except: continue
         
         schedule[group_id] = daily_schedule

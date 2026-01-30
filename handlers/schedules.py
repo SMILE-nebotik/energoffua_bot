@@ -15,49 +15,51 @@ KYIV_TZ = pytz.timezone('Europe/Kyiv')
 logger = logging.getLogger(__name__)
 
 def format_day_block(date_title, schedule_list, update_time=None):
-    """
-    Старий добрий візуал: шкала 48 символів, розрахунок годин та інтервали.
-    """
+
     if not schedule_list:
         return f"📅 {date_title}\n⚪ Дані відсутні.\n"
-    
-    # Якщо прийшло 24 години (новий формат), розширюємо до 48 для сумісності з візуалом
+
     if len(schedule_list) == 24:
         extended_list = []
         for status in schedule_list:
             extended_list.extend([status, status])
         schedule_list = extended_list
-
     off_slots = schedule_list.count('off')
     total_off_hours = off_slots * 0.5
-    if total_off_hours.is_integer(): total_off_hours = int(total_off_hours)
+    
+    if total_off_hours.is_integer():
+        total_off_hours = int(total_off_hours)
     
     timeline_chars = []
     for i in range(0, 48, 2):
         s1 = schedule_list[i]
-        s2 = schedule_list[i+1] if i+1 < 48 else 'on'
+        s2 = schedule_list[i+1]
         
-        if s1 == 'off' and s2 == 'off': timeline_chars.append("🟥")
-        elif s1 == 'on' and s2 == 'on': timeline_chars.append("🟩")
-        else: timeline_chars.append("🟧")
+        if s1 == 'off' and s2 == 'off':
+            timeline_chars.append("🟥")
+        elif s1 == 'on' and s2 == 'on':
+            timeline_chars.append("🟩")
+        else:
+            timeline_chars.append("🟧")
             
     timeline_visual = "".join(timeline_chars)
-
     intervals = []
     start_index = None
+    
     for i, status in enumerate(schedule_list):
         if status == 'off':
-            if start_index is None: start_index = i
+            if start_index is None:
+                start_index = i
         else:
             if start_index is not None:
-                s_h, s_m = start_index // 2, "00" if start_index % 2 == 0 else "30"
-                e_h, e_m = i // 2, "00" if i % 2 == 0 else "30"
-                intervals.append(f"🕰 {int(s_h):02d}:{s_m} - {int(e_h):02d}:{e_m}")
+                h1, m1 = divmod(start_index, 2)
+                h2, m2 = divmod(i, 2)
+                intervals.append(f"🕰 {h1:02d}:{'30' if m1 else '00'} - {h2:02d}:{'30' if m2 else '00'}")
                 start_index = None
                 
     if start_index is not None:
-         s_h, s_m = start_index // 2, "00" if start_index % 2 == 0 else "30"
-         intervals.append(f"🕰 {int(s_h):02d}:{s_m} - 24:00")
+         h1, m1 = divmod(start_index, 2)
+         intervals.append(f"🕰 {h1:02d}:{'30' if m1 else '00'} - 24:00")
          
     intervals_text = "\n".join(intervals) if intervals else "🎉 Світло має бути весь день!"
     
@@ -68,8 +70,10 @@ def format_day_block(date_title, schedule_list, update_time=None):
         f"{intervals_text}\n\n"
         f"📊 Всього без світла: {total_off_hours} год."
     )
+    
     if update_time: 
         text += f"\n🕒 Оновлено: {update_time}"
+        
     return text
 
 async def send_schedule(message, user_id, group, region_code, is_edit=False, is_personal=True):
